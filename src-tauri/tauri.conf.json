@@ -1,0 +1,32 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "On Air",
+  "version": "0.1.0",
+  "identifier": "com.smarttv.onair",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://127.0.0.1:5173",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../build"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [{
+      "title": "On Air — televisión en vivo",
+      "width": 1320,
+      "height": 850,
+      "minWidth": 780,
+      "minHeight": 600,
+      "center": true,
+      "backgroundColor": "#080b12"
+    }],
+    "security": {
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' asset: https://asset.localhost https: data:; connect-src ipc: http://ipc.localhost https://iptv-org.github.io https: http: ws: wss:; media-src 'self' blob: https: http:; worker-src 'self' blob:; font-src 'self' https://fonts.gstatic.com data:"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": ["icons/icon.png"]
+  }
+}

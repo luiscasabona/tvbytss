@@ -1,0 +1,25 @@
+{
+  "name": "smart-tv",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "vite build",
+    "preview": "vite preview",
+    "tauri": "tauri"
+  },
+  "dependencies": {
+    "hls.js": "^1.6.15",
+    "lucide-svelte": "^0.468.0",
+    "svelte": "^5.39.6"
+  },
+  "devDependencies": {
+    "@sveltejs/adapter-static": "^3.0.8",
+    "@sveltejs/kit": "^2.39.0",
+    "@sveltejs/vite-plugin-svelte": "^6.2.1",
+    "@tauri-apps/cli": "^2.8.4",
+    "typescript": "~5.8.3",
+    "vite": "^7.1.7"
+  }
+}
