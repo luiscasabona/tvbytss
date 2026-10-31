@@ -51,7 +51,7 @@ En otra, ejecuta la app con `npm run dev` o `npm run tauri dev`. Vite reenvía `
 
 ### Despliegue web
 
-El despliegue incluye API, web estática y Caddy como proxy TLS con certificados automáticos. La guía detallada para configurar DNS, firewall, `.env`, backups, actualizaciones y diagnóstico está en [DEPLOY_CADDY.md](DEPLOY_CADDY.md). Resumen:
+El despliegue incluye API y web estática en Docker Compose, detrás del Caddy que ya está instalado en el host. La web solo se publica en `127.0.0.1:8080`; la guía para configurar el sitio en Caddy, DNS, firewall, `.env`, backups, actualizaciones y diagnóstico está en [DEPLOY_CADDY.md](DEPLOY_CADDY.md). Resumen:
 
 ```sh
 cp .env.example .env
@@ -59,7 +59,7 @@ cp .env.example .env
 docker compose up --build -d
 ```
 
-Solo Caddy publica puertos al exterior (80/443); web y API permanecen en la red interna de Compose. Caddy obtiene y renueva TLS para el dominio. La API solo expone lectura pública; no hay operaciones de edición ni cuentas de usuario. `GET /api/v1/status` muestra la última sincronización. Endpoints principales: `GET /api/v1/channels`, `GET /api/v1/guides?country=PE` y `GET /health`.
+El Caddy del host acepta el tráfico externo y reenvía al puerto loopback de la web; la API no se expone directamente. Caddy obtiene y renueva TLS para el dominio. La API solo expone lectura pública; no hay operaciones de edición ni cuentas de usuario. `GET /api/v1/status` muestra la última sincronización. Endpoints principales: `GET /api/v1/channels`, `GET /api/v1/guides?country=PE` y `GET /health`.
 
 Para compilar una app de escritorio de release, apuntar el bundle al dominio público de la API:
 

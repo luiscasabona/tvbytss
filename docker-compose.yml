@@ -26,26 +26,8 @@ services:
     depends_on:
       backend:
         condition: service_healthy
-    expose:
-      - "80"
-
-  caddy:
-    image: caddy:2-alpine
-    restart: unless-stopped
-    environment:
-      DOMAIN: ${DOMAIN:?Define DOMAIN en .env}
-    depends_on:
-      - web
     ports:
-      - "80:80"
-      - "443:443"
-      - "443:443/udp"
-    volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy-data:/data
-      - caddy-config:/config
+      - "127.0.0.1:${WEB_PORT:-8080}:80"
 
 volumes:
   onair-data:
-  caddy-data:
-  caddy-config:

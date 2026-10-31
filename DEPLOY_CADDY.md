@@ -1,24 +1,22 @@
-# Desplegar On Air con Docker Compose y Caddy
+# Desplegar On Air con Docker Compose y Caddy en el host
 
-Esta guía despliega la app web, la API y Caddy en un único servidor Linux. Caddy recibe el tráfico público, obtiene y renueva HTTPS automáticamente y reenvía a la web. Nginx, dentro del contenedor web, sirve los archivos estáticos y pasa `/api` al backend. La API y la web no publican puertos directamente al host; el volumen `onair-data` conserva SQLite.
+Esta guía usa el Caddy que ya está instalado y ejecutándose directamente en el servidor. Docker Compose levanta la web y la API; la web queda publicada solo en `127.0.0.1:8080`. Caddy termina HTTPS y reenvía las solicitudes al contenedor web. Nginx, dentro de ese contenedor, sirve Svelte y pasa `/api` al backend. SQLite persiste en el volumen `onair-data`.
 
 ```text
-Internet ── HTTPS ── Caddy :443 ── web/nginx :80 ──┬── archivos Svelte
-                                                   └── backend :8000 ── SQLite
+Internet ── HTTPS ── Caddy (host) ── 127.0.0.1:8080 ── Nginx/web ──┬── Svelte
+                                                                    └── API ── SQLite
 ```
 
-## 1. Requisitos del servidor
+## 1. Requisitos
 
-- Servidor Linux con Docker Engine y el plugin Docker Compose instalados.
-- Un dominio, por ejemplo `tv.midominio.com`, con los registros DNS `A` (y `AAAA` si el servidor tiene IPv6) apuntando a la IP pública del servidor.
-- Puertos TCP `80` y `443` abiertos tanto en el firewall del servidor como en el firewall del proveedor. Se publica también UDP `443` para HTTP/3.
-- El dominio debe resolver al servidor antes de arrancar Caddy. Caddy usa el nombre del sitio para solicitar y renovar el certificado automáticamente. [Requisitos de HTTPS automático de Caddy](https://caddyserver.com/docs/automatic-https).
+- Servidor Linux con Docker Engine y el plugin Docker Compose.
+- Caddy instalado en el host y funcionando como servicio.
+- Dominio (por ejemplo `tv.midominio.com`) con DNS `A` (y `AAAA` si aplica) apuntando a la IP pública del servidor.
+- TCP `80` y `443` accesibles desde Internet para que Caddy obtenga y renueve TLS. La emisión automática de certificados requiere un hostname público resoluble y que Caddy pueda atender esos puertos ([requisitos de Caddy](https://caddyserver.com/docs/automatic-https)).
 
-Si hay otro servidor web usando esos puertos, hay que detenerlo o integrarlo como proxy externo. No se deben publicar directamente los puertos de Nginx o de la API.
+No agregues otro Caddy en Docker ni publiques al exterior el puerto de Nginx o el de la API. El Compose de este proyecto enlaza la web únicamente a loopback.
 
-## 2. Obtener el proyecto y configurar el dominio
-
-En el servidor:
+## 2. Obtener el proyecto y configurar Compose
 
 ```sh
 sudo mkdir -p /opt/on-air
@@ -28,35 +26,55 @@ git clone <URL_DEL_REPOSITORIO> .
 cp .env.example .env
 ```
 
-Edita `.env` y configura el dominio real y los orígenes permitidos para las apps de escritorio:
+El `.env` debe contener los orígenes permitidos para las apps Tauri y el puerto local de la web:
 
 ```dotenv
-DOMAIN=tv.midominio.com
 CORS_ORIGINS=tauri://localhost,https://tauri.localhost
+WEB_PORT=8080
 VITE_API_BASE_URL=
 ```
 
-`CORS_ORIGINS` corresponde a macOS/Linux y Windows con Tauri. La web usa el mismo origen para llamar a la API. La API no tiene operaciones de escritura públicas ni cuentas de usuario. Mantén `.env` fuera del repositorio; contiene configuración del servidor.
+La web llama a la API en el mismo origen; CORS se usa para las apps de escritorio. La API publica lectura únicamente y no requiere cuentas.
 
-## 3. Validar configuración e iniciar
-
-Desde `/opt/on-air`:
+Valida y arranca los contenedores:
 
 ```sh
 docker compose config
 docker compose up -d --build
+docker compose ps
 ```
 
-El primer build descarga imágenes y dependencias, por lo que puede tardar. El backend importa el catálogo de IPTV-org al arrancar y luego cada 12 horas. La guía IPTV-EPG se importa la primera vez que se solicita cada país durante el día UTC; después se sirve la copia compartida guardada en SQLite.
-
-Comprueba los contenedores y los logs:
+Comprueba desde el propio servidor que el puerto está escuchando en loopback y que la API responde a través de Nginx:
 
 ```sh
-docker compose ps
-docker compose logs --tail=100 caddy web backend
+curl -I http://127.0.0.1:8080/
+curl http://127.0.0.1:8080/health
+curl -sS http://127.0.0.1:8080/api/v1/status
 ```
 
-Cuando Caddy haya obtenido el certificado, verifica el sitio y la API:
+El catálogo se importa al iniciar el backend y luego cada 12 horas. La guía XMLTV se carga cuando un cliente solicita por primera vez un país durante el día UTC; el servidor comparte esa guía hasta que cambia el día.
+
+## 3. Añadir el sitio al Caddy del host
+
+Edita el Caddyfile que ya usa el servicio instalado. En instalaciones Linux comunes está en `/etc/caddy/Caddyfile`; si tu servicio usa otra ruta, modifica el archivo configurado en ese servicio. **Conserva los sitios existentes** y añade este bloque cambiando el hostname:
+
+```caddyfile
+tv.midominio.com {
+  encode zstd gzip
+  reverse_proxy 127.0.0.1:8080
+}
+```
+
+Valida y recarga Caddy:
+
+```sh
+sudo caddy validate --config /etc/caddy/Caddyfile
+sudo systemctl reload caddy
+```
+
+Si el Caddy del host se gestiona de otra manera, usa el mecanismo de validación y recarga correspondiente a esa instalación. Caddy redirige HTTP a HTTPS y gestiona la emisión y renovación del certificado cuando el dominio resuelve al servidor y los puertos requeridos están accesibles ([documentación de reverse proxy](https://caddyserver.com/docs/caddyfile/directives/reverse_proxy)).
+
+Verifica desde el servidor y desde una máquina externa:
 
 ```sh
 curl -I https://tv.midominio.com/
@@ -65,40 +83,35 @@ curl -sS https://tv.midominio.com/api/v1/status
 curl -sS 'https://tv.midominio.com/api/v1/guides?country=PE' | head -c 500
 ```
 
-El endpoint de guía puede tardar en la primera solicitud del país mientras descarga y procesa XMLTV. La interfaz indica error si la fuente falla y permite reintentar. Revisa `docker compose logs -f caddy backend` si el certificado o la importación no avanzan.
+La primera solicitud de una guía puede tardar mientras descarga y procesa XMLTV.
 
 ## 4. Compilar la app de escritorio
 
-La versión web usa la ruta relativa `/api` a través de Nginx. Para compilar una versión de Tauri que consuma el servidor, define la URL pública de la API al ejecutar el build:
+Apunta el build de Tauri al origen público del sitio, sin `/api` al final:
 
 ```sh
 VITE_API_BASE_URL=https://tv.midominio.com npm run tauri build
 ```
 
-El valor debe ser el origen del sitio, sin `/api` al final. El servidor deberá permitir los orígenes Tauri de la plataforma en `CORS_ORIGINS`.
+Asegúrate de que `CORS_ORIGINS` incluya el origen Tauri correspondiente. El sitio web usa la ruta relativa `/api` por el mismo host.
 
 ## 5. Actualizar la instalación
 
-Antes de actualizar, crea una copia de seguridad como se describe abajo. Después, desde la carpeta del proyecto:
+Haz una copia de SQLite antes de actualizar y ejecuta:
 
 ```sh
+cd /opt/on-air
 git pull --ff-only
 docker compose up -d --build
 docker compose ps
-```
-
-Compose recrea los servicios con la imagen nueva y conserva los volúmenes nombrados. Para revisar el estado tras la actualización:
-
-```sh
-docker compose logs --tail=100 backend web caddy
 curl -fsS https://tv.midominio.com/health
 ```
 
-Para volver al código anterior, selecciona el commit anterior con Git y vuelve a ejecutar `docker compose up -d --build`. No borres el volumen de datos al hacer rollback.
+Compose recrea los servicios y conserva el volumen nombrado. Para volver al código anterior, selecciona el commit previo y repite `docker compose up -d --build`. No elimines el volumen durante el rollback.
 
-## 6. Copia de seguridad de SQLite
+## 6. Respaldar la base SQLite
 
-Haz la copia con la API activa usando la función de backup de SQLite, que incluye de forma segura los datos aunque la base use WAL. El siguiente comando genera un archivo en el directorio actual del servidor:
+Este comando usa la API de backup de SQLite para copiar correctamente la base aunque esté usando WAL:
 
 ```sh
 BACKUP="on-air-$(date -u +%Y%m%dT%H%M%SZ).sqlite3"
@@ -106,20 +119,20 @@ docker compose exec -T backend python -c 'import sqlite3; s=sqlite3.connect("/da
 docker cp "$(docker compose ps -q backend):/tmp/on-air-backup.sqlite3" "$BACKUP"
 ```
 
-Copia ese archivo fuera del servidor o a almacenamiento de backups protegido y define una retención. También conserva los volúmenes `caddy-data` y `caddy-config`: contienen el estado TLS y la configuración de Caddy.
+Guarda el archivo fuera del servidor o en almacenamiento de backups protegido, con una política de retención. Prueba periódicamente una restauración. La configuración y los datos TLS de Caddy pertenecen al host; respalda también el directorio de datos que usa el servicio Caddy si necesitas conservar ese estado.
 
-Para restaurar SQLite, detén el backend, copia el archivo de backup a `/data/on-air.sqlite3` dentro del contenedor o volumen y vuelve a levantarlo. La restauración reemplaza el catálogo y las guías guardadas, así que verifica primero que elegiste el backup correcto.
-
-> `docker compose down` mantiene los volúmenes. Evita `docker compose down -v`: esa opción elimina también el catálogo, las guías y el estado de certificados guardados.
+`docker compose down` conserva los volúmenes. Evita `docker compose down -v`, porque elimina el volumen que contiene el catálogo y las guías.
 
 ## 7. Operación y diagnóstico
 
-- **Estado de servicios:** `docker compose ps`.
-- **Logs en vivo:** `docker compose logs -f caddy web backend`.
-- **Forzar reconstrucción:** `docker compose build --no-cache web backend && docker compose up -d`.
-- **Certificado no emitido:** confirma DNS público, disponibilidad externa de TCP 80/443 y que no haya otro proceso ocupando los puertos; consulta los logs de Caddy.
-- **Catálogo vacío o antiguo:** revisa `docker compose logs backend` y `https://tv.midominio.com/api/v1/status`. El backend conserva la última copia válida cuando el proveedor falla.
-- **Guía no disponible:** verifica que el país exista en IPTV-EPG y revisa los logs del backend. Un fallo no reemplaza una guía válida almacenada para ese día.
-- **Espacio y backups:** monitorea el disco donde Docker guarda los volúmenes y prueba periódicamente la restauración de una copia.
+```sh
+docker compose ps
+docker compose logs -f web backend
+sudo journalctl -u caddy -f
+```
 
-El volumen `onair-data` guarda el archivo SQLite; Caddy maneja certificados y redirección HTTP a HTTPS automáticamente al tener un dominio público en el Caddyfile. [Configuración de reverse proxy de Caddy](https://caddyserver.com/docs/caddyfile/directives/reverse_proxy).
+- **No aparece HTTPS:** revisa DNS, acceso entrante a TCP 80/443 y `journalctl -u caddy`.
+- **Caddy devuelve 502:** verifica `docker compose ps` y `curl http://127.0.0.1:8080/health` en el host.
+- **Catálogo vacío o antiguo:** revisa los logs del backend y `https://tv.midominio.com/api/v1/status`. El backend conserva la última copia válida si IPTV-org no responde.
+- **Guía no disponible:** comprueba los logs del backend y la disponibilidad de ese país en IPTV-EPG; se puede reintentar si no se guardó una copia válida ese día.
+- **Disco lleno:** vigila el volumen Docker y el espacio destinado a backups.
